@@ -277,5 +277,13 @@ The video demonstrates:
 - Real-time crawler execution logs.
 - Website summarization and structured JSON extraction.
 - Error handling for inaccessible websites.
-Live Application: https://cli-chat-crawler.onrender.com/
-Source Code :https://github.com/pankajbhattacharjee/cli-chat-crawler
+
+## 🚀 Live Demo
+
+**Live Application:** [Crawl Console – Open App](https://cli-chat-crawler.onrender.com/)
+
+Try the application directly in your browser without installing anything.
+
+## 💻 Source Code
+
+[View GitHub Repository](https://github.com/pankajbhattacharjee/cli-chat-crawler)
