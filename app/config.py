@@ -29,3 +29,7 @@ ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "auto").strip().lower()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 MAX_REQUESTS_PER_DAY = int(os.getenv("MAX_REQUESTS_PER_DAY", "300"))  # global cap: protects your API quota
+# AWS S3 Storage
+S3_ENABLED = os.getenv("S3_ENABLED", "0").strip() == "1"
+S3_BUCKET = os.getenv("S3_BUCKET", "").strip()
+AWS_REGION = os.getenv("AWS_REGION", "ap-south-1").strip()

@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import config
+from .storage import upload_result
 from .executor import Executor
 from .llm import Interpreter, template_summary
 from .security import redact
@@ -138,6 +139,35 @@ async def orchestrate(messages: list[Msg]):
                  message=redact(failure_message(data, res, problem)), execution=execution,
                  data=data, plan=plan, **meta)
         return
+        # Upload successful crawl results to S3 without blocking the event loop.
+    storage_info = {
+        "enabled": config.S3_ENABLED,
+        "uploaded": False,
+        "s3_uri": None,
+    }
+
+    if config.S3_ENABLED:
+        yield ev(type="status", message="Uploading crawl result to AWS S3...")
+
+        try:
+            s3_uri = await asyncio.to_thread(
+                upload_result,
+                res.output_path,
+                run_id,
+            )
+
+            storage_info.update({
+                "uploaded": True,
+                "s3_uri": s3_uri,
+            })
+
+        except Exception:
+            # S3 failure must not destroy an otherwise successful crawl.
+            storage_info["uploaded"] = False
+            yield ev(
+                type="status",
+                message="S3 upload failed. Your local crawl result is preserved.",
+            )
 
     yield ev(type="status", message="Writing summary…")
     summary, summary_source = await interpreter.summarize(data, user_request)
@@ -146,7 +176,9 @@ async def orchestrate(messages: list[Msg]):
     if args.notes:
         summary += "\n\nAdjusted to safe limits: " + "; ".join(args.notes) + "."
     yield ev(type="result", status=data["status"], message=redact(summary), execution=execution,
-             data=data, plan=plan, summary_source=summary_source, **meta)
+             data=data, plan=plan, summary_source=summary_source,
+             storage=storage_info, **meta)
+
 
 
 @app.post("/api/chat")
