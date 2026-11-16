@@ -1,0 +1,22 @@
+# One container serves both the API and the chat UI.
+# Usage:  cp .env.example .env   (add your key)   then   docker compose up -d --build
+services:
+  app:
+    build: .
+    image: crawl-console:latest
+    ports:
+      - "80:8000"            # http://<server-ip>/   (use "8000:8000" for local runs)
+    env_file: .env
+    restart: unless-stopped
+    mem_limit: 512m
+    pids_limit: 128
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+    volumes:
+      - runs-data:/srv/runs  # crawl result files (kept across restarts)
+
+volumes:
+  runs-data:
