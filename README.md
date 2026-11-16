@@ -1,269 +1,396 @@
 # Crawl Console: CLI-Driven AI Chat Crawler
 
-A chat application that converts natural-language requests into **real CLI executions**.
+A CLI-driven web crawler with an interactive interface for crawling websites, extracting structured content, and storing crawl results locally or in AWS S3.
 
-For example, a user can ask:
+The project focuses on reliable web crawling, configurable execution, structured JSON output, and secure cloud storage integration.
 
-> Crawl https://example.com, extract the important information, give me a summary, and return the data in JSON.
+---
 
-The backend validates the request, executes the `sitecrawl` CLI as a subprocess, captures stdout, stderr, exit code, and result files, validates the output, and responds with a summary and structured JSON.
+## 🚀 Features
 
-## Architecture
+- **Web Crawling:** Crawl publicly accessible websites and extract page content.
+- **Interactive Interface:** Use the application interface to configure and monitor crawl jobs.
+- **Structured JSON Output:** Save crawl results in a structured JSON format.
+- **AWS S3 Integration:** Optionally upload successful crawl results to Amazon S3.
+- **Local Storage:** Preserve crawl results locally.
+- **Configurable Crawling:** Configure crawling behavior through environment variables.
+- **Error Handling:** Handle failed requests and crawling errors.
+- **Security:** Validate URLs and block requests to localhost and private network addresses to reduce SSRF risks.
+- **Automated Testing:** Unit tests for application functionality and storage integration.
+
+---
+
+## 🏗️ Architecture
+
+The application follows a modular architecture:
 
 ```text
-Browser (static/index.html)
-   |
-   | POST /api/chat (NDJSON stream: status, log, result)
-   v
-FastAPI (app/main.py) -- Orchestrator
-   |
-   | 1. llm.py
-   |    Gemini (or Claude) tool use proposes:
-   |    {url, max_pages, depth}
-   |    Fallback: regex rules
-   |
-   | 2. validator.py
-   |    URL scheme, port, SSRF protection,
-   |    DNS validation and limit enforcement
-   |
-   | 3. executor.py
-   |    asyncio.create_subprocess_exec()
-   |    Runs the approved CLI without a shell
-   |
-   | 4. main.py
-   |    Parses and schema-validates runs/<id>.json
-   |
-   | 5. llm.py
-   |    Summarizes verified crawl data
-   |    Uses a template fallback if the LLM is unavailable
-   v
-Chat Interface
-   - Status badge
-   - AI-generated summary
-   - Execution details
-   - Exit code and stderr
-   - Extracted JSON viewer
+User
+  |
+  v
+Interactive Interface
+  |
+  v
+Crawler Application
+  |
+  v
+URL Validation & Security Checks
+  |
+  v
+Web Crawling Engine
+  |
+  v
+Content Extraction
+  |
+  v
+JSON Result Generation
+  |
+  +----------------------+
+  |                      |
+  v                      v
+Local JSON Storage    AWS S3 Storage
+                       (Optional)
 ```
 
-## Which CLI and Why?
+### AWS S3 Storage Workflow
 
-`cli/sitecrawl.py` is a purpose-built website crawler built using Requests, BeautifulSoup, and `urllib.robotparser`.
+When AWS S3 storage is enabled:
 
-It was chosen because:
+1. The crawler completes a crawl successfully.
+2. The application generates a structured JSON result.
+3. The result is saved locally.
+4. The application uploads the JSON file to the configured S3 bucket.
+5. The uploaded object is stored under:
 
-- It installs using Python's package manager (`pip`).
-- It does not require separate Go or Node.js binaries.
-- It generates structured JSON directly.
-- It supports robots.txt checking.
-- It enforces same-domain crawling and SSRF protections.
-
-The CLI can also be used independently:
-
-```bash
-python cli/sitecrawl.py --url https://example.com --max-pages 10 --depth 2 --out result.json
+```text
+crawl-results/<run_id>.json
 ```
 
-**Exit codes:**
-- `0` = Success or partial success
-- `1` = Failed
-- `2` = Refused or blocked
+6. If the S3 upload fails, the local result is preserved.
 
-## Book Extraction
+---
 
-For supported listing pages containing `article.product_pod` cards, such as [Books to Scrape](https://books.toscrape.com), the CLI also extracts book information.
+## 🛠️ Technology Stack
 
-The output includes a top-level `books` array containing:
-
-- `title`
-- `price`
-- `availability`
-- `rating`
-- `product_url`
-
-Book entries are de-duplicated, and `stats.total_books_extracted` reports the total number extracted.
-
-Other websites return an empty `books` list.
-
-## How Results Are Captured
-
-| Captured Information | How It Works |
+| Category | Technologies |
 |---|---|
-| Live progress | stdout lines are streamed to the UI |
-| Errors | stderr is collected and secrets are redacted |
-| Process status | Exit code, duration, timeout and cancellation flags |
-| Result | JSON output is saved in `runs/<run_id>.json` and schema-checked |
+| Language | Python |
+| Backend | FastAPI |
+| Web Crawling | Python HTTP and crawling libraries |
+| Cloud Storage | Amazon S3 |
+| AWS SDK | Boto3 |
+| Cloud Security | AWS IAM |
+| Configuration | Environment Variables |
+| Testing | Pytest |
+| Version Control | Git & GitHub |
+| Cloud Tools | AWS CLI |
 
-The reported status (`success`, `partial`, or `failed`) is determined using the exit code and validated JSON output.
+---
 
-A summary is generated only when at least one page has actually been crawled. Failures display the actual error instead of a fabricated summary.
-
-## Setup
-
-### Prerequisites
-
-- Python 3.10 or later
-- pip
-- A Gemini API key or Anthropic API key (optional)
-
-### Installation
-
-```bash
-# Clone the repository
-git clone YOUR_GITHUB_REPOSITORY_URL
-
-# Enter the project directory
-cd cli-chat-crawler
-
-# Create a virtual environment
-python -m venv .venv
-
-# Activate the environment (Windows PowerShell)
-.\.venv\Scripts\Activate.ps1
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Create your environment file
-copy .env.example .env
-```
-
-Open `.env` and add your API key if you want to enable an AI provider.
-
-### Run the Application
-
-```bash
-python -m uvicorn app.main:app --reload --port 8000
-```
-
-Open the application in your browser:
-
-http://localhost:8000
-
-**Note:** Without an API key, the application can still perform real crawls using its rule-based fallback and template summaries.
-
-### Docker Deployment
-
-If the project includes the provided `Dockerfile` and `docker-compose.yml`, you can run:
-
-```bash
-docker compose up -d --build
-```
-
-The application is configured to serve on port 80. Check `docker-compose.yml` for the actual port mapping.
-
-For AWS EC2 deployment, see [DEPLOY.md](DEPLOY.md).
-
-## Environment Variables
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `GEMINI_API_KEY` | Empty | Enables Gemini intent understanding and summaries |
-| `GEMINI_MODEL` | `gemini-3.8-flash` | Gemini model |
-| `ANTHROPIC_API_KEY` | Empty | Enables the alternative Anthropic provider |
-| `ANTHROPIC_MODEL` | `claude-sonnet-5-5` | Anthropic model |
-| `LLM_PROVIDER` | `auto` | Selects `auto`, `gemini`, `anthropic`, or `rules` |
-| `MAX_REQUESTS_PER_DAY` | 300 | Global daily request limit |
-| `MAX_PAGES_CAP` | 30 | Maximum permitted pages per crawl |
-| `MAX_DEPTH_CAP` | 2 | Maximum permitted crawl depth |
-| `CRAWL_TIME_BUDGET_SEC` | 45 | Maximum crawl time budget |
-| `RATE_LIMIT_PER_MIN` | 12 | Per-IP request limit |
-| `MAX_CONCURRENT_CRAWLS` | 2 | Maximum parallel crawler processes |
-| `DEV_ALLOW_PRIVATE_HOSTS` | 0 | Testing option for allowing private hosts |
-
-## Testing the Demo
-
-1. Start the application and open http://localhost:8000.
-2. Send the following request:
-
-   > Crawl https://example.com, extract the important information, give me a summary, and return the extracted data in JSON format.
-
-3. Watch the live crawler output.
-4. Expand **Execution Details** to view the real command, exit code, and stderr.
-5. Expand **Extracted Data (JSON)** to inspect the structured output.
-
-### Edge Cases to Test
-
-| Input | Expected Behaviour |
-|---|---|
-| `Crawl http://127.0.0.1` | Rejected by SSRF protection |
-| `Crawl http://169.254.169.254` | Rejected by SSRF protection |
-| `Crawl https://this-domain-does-not-exist-xyz.com` | Honest crawl failure, no fabricated summary |
-| `hello` | Normal chat response without a crawl |
-| Cancel a longer crawl | Process is terminated and status becomes Cancelled |
-
-### Automated Tests
-
-Run:
-
-```bash
-pytest -q
-```
-
-The project currently has **28 passing tests**, covering:
-
-- URL validation and security
-- Real CLI crawling using a local fixture website
-- LLM functionality using fake providers
-
-## Security Measures
-
-- **No shell execution:** Uses `asyncio.create_subprocess_exec` with a fixed command template and validated arguments.
-- **SSRF protection:** Allows HTTP/HTTPS only, checks permitted ports, rejects URL credentials, and validates DNS results against public IP addresses.
-- **Redirect protection:** Rechecks destinations inside the CLI on redirect hops.
-- **Resource limits:** Enforces page and depth limits, request timeouts, an overall time budget, page-size limits, and result-file limits.
-- **Untrusted content:** Website content is treated as data during summarization. The LLM cannot execute system commands.
-- **Safe UI rendering:** Uses `textContent` rather than injecting untrusted HTML.
-- **Secret protection:** The crawler subprocess receives a minimal environment without API keys. Output is redacted, and `.env` is excluded from Git.
-- **Polite crawling:** Respects robots.txt, uses same-domain crawling, applies request delays, and identifies itself with a User-Agent.
-
-## Known Limitations
-
-- Static HTML only; JavaScript-rendered pages are not supported.
-- DNS is checked before connecting, so DNS rebinding between validation and connection remains a theoretical risk.
-- Stronger isolation can be achieved using Docker and network egress filtering.
-- Rate limiting and the run registry are in-memory and intended for a single application process.
-
-## AI Tools and Services Used
-
-- **Google Gemini API:** Default provider for intent understanding and summarization.
-- **Anthropic API:** Optional alternative provider, if configured.
-- **ChatGPT (OpenAI):** Used for planning, debugging assistance, and development guidance.
-- **Libraries:** FastAPI, Uvicorn, Requests, BeautifulSoup4, python-dotenv, and pytest.
-
-## Project Layout
+## 📂 Project Structure
 
 ```text
 cli-chat-crawler/
-|
-|-- app/
-|   |-- main.py
-|   |-- llm.py
-|   |-- validator.py
-|   |-- executor.py
-|   |-- security.py
-|   |-- config.py
-|
-|-- cli/
-|   |-- sitecrawl.py
-|
-|-- static/
-|   |-- index.html
-|
-|-- tests/
-|   |-- test_validator.py
-|   |-- test_cli.py
-|   |-- test_llm.py
-|
-|-- runs/                 # Generated crawl results (Git-ignored)
-|
-|-- .env.example
-|-- .gitignore
-|-- requirements.txt
-|-- README.md
-|-- Dockerfile
-|-- docker-compose.yml
-|-- DEPLOY.md
+│
+├── app/
+│   ├── main.py
+│   ├── config.py
+│   └── storage.py
+│
+├── tests/
+│   └── test_storage.py
+│
+├── .env.example
+├── .gitignore
+├── requirements.txt
+├── README.md
+└── ...
 ```
+
+---
+
+## ⚙️ Installation and Setup
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/pankajbhattacharjee/cli-chat-crawler.git
+```
+
+### 2. Navigate to the Project
+
+```bash
+cd cli-chat-crawler
+```
+
+### 3. Create a Virtual Environment
+
+Windows:
+
+```powershell
+python -m venv .venv
+```
+
+Activate it:
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+Linux/macOS:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+### 4. Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 5. Configure Environment Variables
+
+Create a `.env` file using the example configuration:
+
+Windows:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Linux/macOS:
+
+```bash
+cp .env.example .env
+```
+
+Update the values in `.env` according to your configuration.
+
+---
+
+## 🔐 Environment Variables
+
+The application uses environment variables for configuration.
+
+Example:
+
+```env
+# Application Configuration
+# Add your existing application settings here.
+
+# AWS S3 Storage
+S3_ENABLED=0
+S3_BUCKET=
+AWS_REGION=ap-southeast-2
+```
+
+### AWS Configuration
+
+| Variable | Description | Example |
+|---|---|---|
+| `S3_ENABLED` | Enables or disables S3 uploads | `1` |
+| `S3_BUCKET` | Name of the destination S3 bucket | `your-s3-bucket` |
+| `AWS_REGION` | AWS region where the bucket is located | `ap-southeast-2` |
+
+**Important:** Keep `S3_ENABLED=0` if you want local storage only.
+
+To enable S3 uploads:
+
+```env
+S3_ENABLED=1
+S3_BUCKET=your-s3-bucket
+AWS_REGION=ap-southeast-2
+```
+
+Replace `your-s3-bucket` with your actual S3 bucket name.
+
+Never commit your actual `.env` file or AWS credentials to GitHub.
+
+---
+
+## ☁️ AWS S3 Integration
+
+The project supports optional cloud storage using Amazon Simple Storage Service (Amazon S3).
+
+### Implementation
+
+- Uses Python's Boto3 SDK.
+- Uploads successful crawl results in JSON format.
+- Uses the AWS default credential provider chain.
+- Supports configurable S3 bucket names.
+- Supports configurable AWS regions.
+- Uses server-side encryption with Amazon S3-managed keys (SSE-S3).
+- Keeps local crawl results if an S3 upload fails.
+
+### AWS Authentication
+
+AWS credentials should be configured securely using one of the supported AWS credential mechanisms.
+
+For local development, AWS CLI can be configured using:
+
+```bash
+aws configure
+```
+
+Enter your AWS access key, secret access key, and region when prompted.
+
+Do not hardcode AWS credentials in Python files.
+
+### Verify S3 Uploads
+
+To list objects in your S3 bucket:
+
+```bash
+aws s3 ls s3://YOUR_BUCKET_NAME/crawl-results/
+```
+
+Replace `YOUR_BUCKET_NAME` with your configured bucket name.
+
+Example object structure:
+
+```text
+your-s3-bucket/
+└── crawl-results/
+    ├── run-id-1.json
+    ├── run-id-2.json
+    └── run-id-3.json
+```
+
+### IAM Permissions
+
+The IAM identity used by the application needs the permissions required for the configured S3 operations.
+
+For uploading objects, the relevant permission is:
+
+```text
+s3:PutObject
+```
+
+If you also want to list objects through the AWS CLI, the identity needs:
+
+```text
+s3:ListBucket
+```
+
+Apply least-privilege permissions and restrict access to the required bucket and prefix.
+
+---
+
+## ▶️ Running the Application
+
+Activate your virtual environment and start the application using the project's configured entry point.
+
+For a FastAPI application, the typical command is:
+
+```bash
+uvicorn app.main:app --reload
+```
+
+Open the local application address shown in your terminal.
+
+If your project uses a different startup command, use the command configured in your deployment or project instructions.
+
+---
+
+## 🧪 Testing
+
+The project uses Pytest for automated testing.
+
+Run all tests:
+
+```bash
+python -m pytest -q
+```
+
+**Latest verified test result:**
+
+```text
+32 passed
+```
+
+The tests cover application functionality and storage-related behavior.
+
+---
+
+## 🔒 Security Considerations
+
+Security is an important part of the crawler.
+
+The project includes protections such as:
+
+- URL validation before crawling.
+- Blocking localhost and private network destinations.
+- Avoiding requests to non-public IP addresses.
+- Secure handling of configuration through environment variables.
+- No hardcoded AWS access keys or secret keys.
+- Private S3 bucket storage.
+- Server-side encryption for uploaded objects.
+
+These protections reduce common risks such as Server-Side Request Forgery (SSRF).
+
+Security controls should be reviewed and tested before exposing the application publicly.
+
+---
+
+## 📦 Dependencies
+
+Install all dependencies using:
+
+```bash
+pip install -r requirements.txt
+```
+
+The project uses Boto3 for AWS S3 integration.
+
+If you want to install it separately:
+
+```bash
+pip install boto3
+```
+
+---
+
+## 🔮 Future Improvements
+
+Potential improvements include:
+
+- Background crawling using task queues.
+- Advanced crawl scheduling.
+- Crawl history and analytics dashboard.
+- Improved monitoring and logging.
+- Additional cloud storage options.
+- More comprehensive integration tests.
+- Docker-based deployment improvements.
+- Advanced AI-based content analysis.
+
+---
+
+## 👨‍💻 Author
+
+**Pankaj Bhattacharjee**
+
+B.Tech – Computer Science and Engineering
+
+Interested in Artificial Intelligence, Machine Learning, Python Development, Backend Engineering, and Cloud Technologies.
+
+### 💻 Source Code
+
+[View GitHub Repository](https://github.com/pankajbhattacharjee/cli-chat-crawler)
+
+## 🚀 Live Demo
+
+**Live Application:** [Crawl Console – Open App](https://cli-chat-crawler.onrender.com/)
+
+Try the application directly in your browser without installing anything.
+
+### Project Repository
+
+https://github.com/pankajbhattacharjee/cli-chat-crawler
+
+---
+
 ## 🎥 Project Demonstration Video
 
 Watch the complete demonstration of Crawl Console, showcasing the AI-powered chat interface, real CLI execution, website crawling, result extraction, and error handling.
@@ -277,13 +404,5 @@ The video demonstrates:
 - Real-time crawler execution logs.
 - Website summarization and structured JSON extraction.
 - Error handling for inaccessible websites.
+---
 
-## 🚀 Live Demo
-
-**Live Application:** [Crawl Console – Open App](https://cli-chat-crawler.onrender.com/)
-
-Try the application directly in your browser without installing anything.
-
-## 💻 Source Code
-
-[View GitHub Repository](https://github.com/pankajbhattacharjee/cli-chat-crawler)
