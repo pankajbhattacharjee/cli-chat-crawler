@@ -85,3 +85,37 @@ def test_extracts_book_fields(site, tmp_path):
     assert first == {"title": "A Light in the Attic", "price": "\u00a351.77", "availability": "In stock",
                      "rating": "Three", "product_url": site + "cat/a_1/index.html"}
     assert d["books"][1]["rating"] == "One"
+
+
+def test_off_domain_redirect_is_not_followed(tmp_path):
+    root = tmp_path / "s"
+    root.mkdir()
+    (root / "index.html").write_text(
+        '<html><title>Home</title><body><a href="/go">go</a></body></html>')
+
+    class H(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *a, **k):
+            super().__init__(*a, directory=str(root), **k)
+
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            if self.path == "/go":
+                self.send_response(302)
+                self.send_header("Location", f"http://localhost:{self.server.server_port}/index.html")
+                self.end_headers()
+            else:
+                super().do_GET()
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        out = tmp_path / "r.json"
+        p = run(f"http://127.0.0.1:{srv.server_port}/", out, "--allow-private", "--max-pages", "5")
+        assert p.returncode == 0
+        d = json.loads(out.read_text())
+        assert "off_domain_redirect" in {e["code"] for e in d["errors"]}
+        assert not any("localhost" in pg["url"] for pg in d["pages"])
+    finally:
+        srv.shutdown()

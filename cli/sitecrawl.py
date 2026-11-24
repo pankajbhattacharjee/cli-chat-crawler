@@ -94,6 +94,7 @@ def check_host(host: str, allow_private: bool) -> None:
 
 def fetch(session: requests.Session, url: str, allow_private: bool):
     """GET with manual redirect handling so every hop is re-validated."""
+    t_start = time.monotonic()
     for _ in range(MAX_REDIRECTS + 1):
         p = urlparse(url)
         if p.scheme not in ("http", "https") or not p.hostname:
@@ -113,7 +114,7 @@ def fetch(session: requests.Session, url: str, allow_private: bool):
             body = b""
             for chunk in r.iter_content(65536):
                 body += chunk
-                if len(body) > MAX_BODY:
+                if len(body) > MAX_BODY or time.monotonic() - t_start > 12:
                     break
             is_text = ctype.startswith("text/") or ctype in ("application/xhtml+xml", "")
             enc = r.encoding if "charset" in header.lower() else "utf-8"
@@ -139,7 +140,7 @@ def load_robots(session, start: str, allow_private: bool):
         rp.parse(text.splitlines())
         rp.modified()
         info["found"] = True
-    elif status in (401, 403):
+    elif status in (401, 403) or status >= 500:
         rp.disallow_all = True
         info["note"] = f"robots.txt returned {status}; treated as disallow-all"
     else:
@@ -270,6 +271,14 @@ def crawl(args) -> int:
             continue
         if depth == 0:
             base = hostkey(final)
+        if depth > 0 and hostkey(final) != base:
+            result["errors"].append({"url": url, "code": "off_domain_redirect",
+                                     "message": f"redirected to {final}"})
+            continue
+        if final != url and not rp.can_fetch(UA, final):
+            result["errors"].append({"url": final, "code": "robots_disallowed",
+                                     "message": "redirect target disallowed by robots.txt"})
+            continue
         if status >= 400:
             result["errors"].append({"url": url, "code": f"http_{status}",
                                      "message": f"HTTP {status}"})
@@ -300,7 +309,8 @@ def crawl(args) -> int:
             else:
                 n_ext += 1
                 external.setdefault(link, None)
-                if any(hostkey(link).endswith(s) for s in SOCIAL_HOSTS):
+                h = hostkey(link)
+                if any(h == s or h.endswith("." + s) for s in SOCIAL_HOSTS):
                     social.add(link)
         page["internal_links_count"], page["external_links_count"] = n_int, n_ext
         result["pages"].append(page)
