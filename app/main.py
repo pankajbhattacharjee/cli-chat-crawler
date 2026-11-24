@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import time
 import uuid
@@ -16,10 +17,11 @@ from pydantic import BaseModel, Field
 from . import config
 from .storage import upload_result
 from .executor import Executor
-from .llm import Interpreter, template_summary
+from .llm import Interpreter
 from .security import redact
 from .validator import ValidationError, validate_crawl_request
 
+logger = logging.getLogger("crawl")
 app = FastAPI(title="CLI-driven AI chat", docs_url=None, redoc_url=None)
 executor = Executor()
 interpreter = Interpreter()
@@ -46,6 +48,9 @@ def ev(**kw) -> str:
 def rate_limit(request: Request) -> None:
     ip = request.client.host if request.client else "unknown"
     q, now = _hits[ip], time.monotonic()
+    if len(_hits) > 10_000:
+        for k in [k for k, v in _hits.items() if not v or now - v[-1] > 60]:
+            del _hits[k]
     while q and now - q[0] > 60:
         q.popleft()
     if len(q) >= config.RATE_LIMIT_PER_MIN:
@@ -68,7 +73,8 @@ def load_result(path: str):
     if size > config.MAX_OUTPUT_BYTES:
         return None, f"result file too large ({size} bytes)"
     try:
-        data = json.load(open(path, encoding="utf-8"))
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
     except (ValueError, OSError) as e:
         return None, f"result file is not valid JSON ({e})"
     missing = REQUIRED_KEYS - set(data) if isinstance(data, dict) else REQUIRED_KEYS
@@ -126,7 +132,7 @@ async def orchestrate(messages: list[Msg]):
                 res = payload
 
     yield ev(type="status", message="Crawler finished. Validating output…")
-    data, problem = load_result(res.output_path)
+    data, problem = await asyncio.to_thread(load_result, res.output_path)
     execution = {"command": res.command_display, "exit_code": res.exit_code,
                  "duration_sec": res.duration_sec, "timed_out": res.timed_out,
                  "cancelled": res.cancelled, "stderr": res.stderr, "log": res.stdout_lines[-60:]}
@@ -139,7 +145,7 @@ async def orchestrate(messages: list[Msg]):
                  message=redact(failure_message(data, res, problem)), execution=execution,
                  data=data, plan=plan, **meta)
         return
-        # Upload successful crawl results to S3 without blocking the event loop.
+    # Upload successful crawl results to S3 without blocking the event loop.
     storage_info = {
         "enabled": config.S3_ENABLED,
         "uploaded": False,
@@ -161,9 +167,11 @@ async def orchestrate(messages: list[Msg]):
                 "s3_uri": s3_uri,
             })
 
-        except Exception:
+        except Exception as e:
             # S3 failure must not destroy an otherwise successful crawl.
+            logger.exception("S3 upload failed for run %s", run_id)
             storage_info["uploaded"] = False
+            storage_info["error"] = type(e).__name__
             yield ev(
                 type="status",
                 message="S3 upload failed. Your local crawl result is preserved.",
@@ -179,6 +187,17 @@ async def orchestrate(messages: list[Msg]):
              data=data, plan=plan, summary_source=summary_source,
              storage=storage_info, **meta)
 
+
+
+@app.on_event("startup")
+async def sweep_runs():
+    cutoff = time.time() - 24 * 3600
+    for f in config.RUNS_DIR.glob("*.json*"):
+        try:
+            if f.stat().st_mtime < cutoff:
+                f.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 @app.post("/api/chat")

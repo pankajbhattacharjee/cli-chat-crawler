@@ -197,6 +197,7 @@ class Interpreter:
         if self.provider == "rules":
             return template_summary(result), "template"
         payload = json.dumps(_compact(result), ensure_ascii=False)[:12000]
+        payload = re.sub(r"</?crawl_result>", "", payload, flags=re.I)
         prompt = (f"User request: {user_request[:500]}\n\n"
                   f"<crawl_result>\n{payload}\n</crawl_result>")
         try:
