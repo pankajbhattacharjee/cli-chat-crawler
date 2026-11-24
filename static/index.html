@@ -150,6 +150,13 @@ function renderDetails(ui, r) {
     if (x.stderr) { d.append(el("pre", "", "stderr:\n" + x.stderr)); }
     ui.rest.append(d);
   }
+  if (r.storage?.enabled) {
+    const d = el("details"); d.append(el("summary", "", "Storage"));
+    d.append(kv([["S3 upload", r.storage.uploaded ? "ok" : "failed"],
+                 ["Location", r.storage.s3_uri || "-"],
+                 ...(r.storage.error ? [["Error", r.storage.error]] : [])]));
+    ui.rest.append(d);
+  }
   if (r.data) {
     const json = JSON.stringify(r.data, null, 2);
     const d = el("details"); d.open = r.status !== "failed"; d.append(el("summary", "", "Extracted data (JSON)"));
